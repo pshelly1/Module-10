@@ -1,0 +1,255 @@
+package com.example.Database;
+
+import javafx.application.Application;
+import javafx.event.ActionEvent;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Map;
+
+import static java.sql.DriverManager.getConnection;
+import static java.util.Collections.unmodifiableMap;
+
+
+public class Database extends Application {
+    private TextArea textArea;
+    private final List<String> words;
+
+    public Database(List<String> words) {
+        this.words = words;
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+        primaryStage.setTitle("Text Analyzer");
+
+        VBox root = new VBox();
+        root.setSpacing(10);
+        root.setPadding(new Insets(10));
+
+        textArea = new TextArea();
+        textArea.setPrefRowCount(10);
+        textArea.setWrapText(true);
+        root.getChildren().add(textArea);
+
+        HBox buttonBar = new HBox();
+        buttonBar.setSpacing(10);
+
+        Button loadButton = new Button("Open File");
+        loadButton.setOnAction(this::handleLoadButtonAction);
+        buttonBar.getChildren().add(loadButton);
+
+        Button analyzeButton = new Button("Analyze");
+        analyzeButton.setOnAction(this::handleAnalyzeButtonAction);
+        buttonBar.getChildren().add(analyzeButton);
+
+        root.getChildren().add(buttonBar);
+
+        Scene scene = new Scene(root, 500, 600);
+        primaryStage.setScene(scene);
+        primaryStage.show();
+    }
+
+    private void handleLoadButtonAction(ActionEvent event) {
+        FileChooser fileChooser = new FileChooser();
+
+        File selectedFile = fileChooser.showOpenDialog(null);
+        if (selectedFile != null) {
+            try {
+                String fileContent = Files.readString(selectedFile.toPath());
+                textArea.setText(fileContent);
+            } catch (IOException e) {
+                e.printStackTrace();
+                displayErrorMessage("Failed to load the file.");
+            }
+        }
+    }
+    private void displayErrorMessage(String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Error");
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+
+
+
+    private void handleAnalyzeButtonAction(ActionEvent event) {
+        try {
+            String text = textArea.getText();
+            List<String> words = extractWords(text);
+            Map<String, Integer> wordFrequencies = unmodifiableMap(calculateWordFrequencies(words));
+            List<Map.Entry<String, Integer>> sortedWords = sortWordFrequencies(wordFrequencies);
+            displayWordFrequencies(sortedWords);  // Add this line
+        } catch (Exception e) {
+            e.printStackTrace();
+            displayErrorMessage("Error", "An error occurred during analysis.");
+        }
+    }
+
+
+    private void displayErrorMessage(String ignoredError, String ignoredS) {
+    }
+
+
+    private List<String> extractWords(String text) {
+        // Remove HTML tags
+        text = text.replaceAll("<.*?\\>", "");
+
+        // Find the poem's content
+        Pattern pattern = Pattern.compile("Title:(.*?)End of Poem", Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(text);
+        if (matcher.find()) {
+            String poemContent = matcher.group(1).trim();
+
+            // Debugging statements
+            System.out.println("Poem Content:");
+            System.out.println(poemContent);
+
+            // Split the content into words
+            String[] wordsArray = poemContent.toLowerCase().split("\\P{L}+");
+            return Arrays.asList(wordsArray);
+        }
+
+        return Collections.emptyList();
+    }
+
+
+    /**
+     */
+    private Map<String, Integer> calculateWordFrequencies(List<String> words) throws SQLException {
+        Map<String, Integer> wordFrequencies = new HashMap<>();
+
+        try {
+            connect(); // Establish database connection
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        try {
+            for (String word : words) {
+                if (!wordFrequencies.containsKey(word)) {
+                    // Word is not in the database, insert it
+                    insertWord(word);
+                }
+
+                wordFrequencies.put(word, wordFrequencies.getOrDefault(word, 0) + 1);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            displayErrorMessage("Error", "An error occurred during database operation.");
+        } finally {
+            disconnect(); // Close database connection
+        }
+
+        return wordFrequencies;
+    }
+
+
+
+    private List<Map.Entry<String, Integer>> sortWordFrequencies(Map<String, Integer> wordFrequencies) {
+        List<Map.Entry<String, Integer>> sortedWords = new ArrayList<>(wordFrequencies.entrySet());
+
+        sortedWords.sort((o1, o2) -> {
+            // Sort by descending order of frequencies
+            int frequencyComparison = o2.getValue().compareTo(o1.getValue());
+            if (frequencyComparison == 0) {
+                // If frequencies are equal, sort alphabetically
+                return o1.getKey().compareToIgnoreCase(o2.getKey());
+            }
+            return frequencyComparison;
+        });
+
+        return sortedWords;
+    }
+
+    private void displayWordFrequencies(List<Map.Entry<String, Integer>> sortedWords) throws SQLException {
+        StringBuilder resultBuilder = new StringBuilder();
+
+        connect(); // Establish database connection
+
+        for (int i = 0; i < Math.min(sortedWords.size(), 20); i++) {
+            Map.Entry<String, Integer> entry = sortedWords.get(i);
+            resultBuilder.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+        }
+
+        disconnect(); // Close database connection
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Word Frequencies");
+        alert.setHeaderText(null);
+        alert.setContentText(resultBuilder.toString());
+        alert.showAndWait();
+    }
+    // Database connection details
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/word_occurrences";
+    private static final String DB_USER = "root";
+    private static final String DB_PASSWORD = "Hatterpride2023";
+
+    // Database connection
+    private Connection connection;
+
+    // Helper method to establish a database connection
+    private void connect() throws SQLException {
+        connection = getConnection(DB_URL, DB_USER, DB_PASSWORD);
+    }
+
+    // Helper method to close the database connection
+    private void disconnect() throws SQLException {
+        if (connection != null && !connection.isClosed()) {
+            connection.close();
+        }
+    }
+
+    // Helper method to insert a word into the database
+    private void insertWord(String word) throws SQLException {
+        String sql = "INSERT INTO word (word) VALUES (?)";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, word);
+            statement.executeUpdate();
+        }
+    }
+
+    // Helper method to retrieve all words from the database
+    private Map<String, Integer> retrieveWordFrequencies() throws SQLException {
+        Map<String, Integer> wordFrequencies = new HashMap<>();
+
+        connect(); // Establish database connection
+
+        String sql = "SELECT * FROM word_occurrences.word";
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                String word = resultSet.getString("word");
+                int id = resultSet.getInt("id");
+                wordFrequencies.put(word, id);
+            }
+        }
+
+        disconnect(); // Close database connection
+
+        return wordFrequencies;
+    }
+
+
+}
+
