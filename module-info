@@ -1,0 +1,11 @@
+module com.example.mod10 {
+    requires javafx.controls;
+    requires javafx.fxml;
+    requires java.desktop;
+    requires java.sql;
+
+
+    opens com.example.mod10 to javafx.fxml;
+    exports com.example.mod10;
+    exports com.example.Database;
+}
